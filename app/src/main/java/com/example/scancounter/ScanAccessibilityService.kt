@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -23,15 +25,27 @@ class ScanAccessibilityService : AccessibilityService() {
         var instance: ScanAccessibilityService? = null
     }
 
-    private var charCountInBurst = 0
-    private var lastKeyTime = 0L
     private var lastScanCountedTime = 0L
+
+    // Catches scans if USS broadcasts them (e.g. in USS test screen)
+    private val ussReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            registerScan()
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         createNotificationChannel()
         updateNotification()
+
+        val filter = IntentFilter("unitech.scanservice.data")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(ussReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(ussReceiver, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -41,41 +55,43 @@ class ScanAccessibilityService : AccessibilityService() {
         return START_STICKY
     }
 
+    // Catches barcodes inserted into GLOW fields via commitText, copy-paste, or auto-input
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            val added = event.addedCount
+            // When a barcode is scanned, multiple characters are inserted at once
+            if (added >= 2) {
+                registerScan()
+            }
+        }
+    }
+
+    // Catches keyevents if USS or scanner sends Enter/Tab
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
-            val now = System.currentTimeMillis()
-            val timeSinceLastKey = now - lastKeyTime
-            lastKeyTime = now
-
-            // Barcode scanners type characters with near-zero delay (< 80ms per key)
-            if (timeSinceLastKey < 100) {
-                charCountInBurst++
-            } else {
-                charCountInBurst = 1
-            }
-
             val isEnterOrTab = event.keyCode == KeyEvent.KEYCODE_ENTER || 
                                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER || 
                                event.keyCode == KeyEvent.KEYCODE_TAB
 
-            // If an Enter/Tab terminates a rapid character sequence, or 5+ rapid chars arrive
-            if (isEnterOrTab && charCountInBurst >= 2) {
-                if (now - lastScanCountedTime > 400) { // Debounce 400ms
-                    registerScan()
-                    lastScanCountedTime = now
-                }
-                charCountInBurst = 0
+            if (isEnterOrTab) {
+                registerScan()
             }
         }
-
-        // Return false so the key event passes directly to GLOW untouched!
-        return false
+        return false // Passes key event to GLOW untouched
     }
 
+    @Synchronized
     private fun registerScan() {
-        scanCount++
-        updateNotification()
-        sendBroadcast(Intent("com.example.scancounter.COUNT_UPDATED"))
+        val now = System.currentTimeMillis()
+        // Debounce: prevent multiple triggers from the same scan within 500ms
+        if (now - lastScanCountedTime > 500) {
+            lastScanCountedTime = now
+            scanCount++
+            updateNotification()
+            sendBroadcast(Intent("com.example.scancounter.COUNT_UPDATED"))
+        }
     }
 
     fun resetCount() {
@@ -121,10 +137,12 @@ class ScanAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(ussReceiver)
+        } catch (_: Exception) {}
         instance = null
         super.onDestroy()
     }
