@@ -8,14 +8,16 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 
 class MainActivity : Activity() {
 
-    private lateinit var countText: TextView
-    private lateinit var resetButton: Button
-    private lateinit var enableServiceButton: Button
+    private lateinit var tvCount: TextView
+    private lateinit var btnReset: Button
+    private lateinit var btnStart: Button
+    private lateinit var btnStop: Button
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -27,33 +29,35 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        countText = findViewById(R.id.countText)
-        resetButton = findViewById(R.id.resetButton)
+        tvCount = findViewById(R.id.tvCount)
+        btnReset = findViewById(R.id.btnReset)
+        btnStart = findViewById(R.id.btnStart)
+        btnStop = findViewById(R.id.btnStop)
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
         }
 
-        resetButton.setOnClickListener {
+        // Tap to open Android Accessibility Settings to turn the service ON
+        btnStart.text = "Enable Accessibility Service"
+        btnStart.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        btnReset.setOnClickListener {
             ScanAccessibilityService.instance?.resetCount()
             updateDisplay()
         }
 
-        // Button to open Accessibility Settings if not yet turned on
-        val btnAccessibility = Button(this).apply {
-            text = "Enable in Accessibility Settings"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
-        (countText.parent as? android.view.ViewGroup)?.addView(btnAccessibility)
+        // Hide unused stop button (accessibility services are toggled in system settings)
+        btnStop.visibility = View.GONE
 
         updateDisplay()
     }
 
     private fun updateDisplay() {
-        countText.text = "${ScanAccessibilityService.scanCount}"
+        tvCount.text = "${ScanAccessibilityService.scanCount}"
     }
 
     override fun onResume() {
