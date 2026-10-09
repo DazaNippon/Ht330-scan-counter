@@ -1,32 +1,25 @@
 package com.example.scancounter
 
-import android.Manifest
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
-    private lateinit var tvCount: TextView
-    private lateinit var btnStart: Button
-    private lateinit var btnStop: Button
-    private lateinit var btnReset: Button
+    private lateinit var countText: TextView
+    private lateinit var resetButton: Button
+    private lateinit var enableServiceButton: Button
 
-    private val updateReceiver = object : BroadcastReceiver() {
+    private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ScanCountService.ACTION_COUNT_UPDATED) {
-                val count = intent.getIntExtra(ScanCountService.EXTRA_COUNT, 0)
-                tvCount.text = count.toString()
-            }
+            updateDisplay()
         }
     }
 
@@ -34,56 +27,48 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        tvCount = findViewById(R.id.tvCount)
-        btnStart = findViewById(R.id.btnStart)
-        btnStop = findViewById(R.id.btnStop)
-        btnReset = findViewById(R.id.btnReset)
+        countText = findViewById(R.id.countText)
+        resetButton = findViewById(R.id.resetButton)
 
-        // Request notification permission for Android 13+
+        // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
-            }
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
         }
 
-        btnStart.setOnClickListener {
-            val intent = Intent(this, ScanCountService::class.java).apply {
-                action = ScanCountService.ACTION_START
-            }
-            ContextCompat.startForegroundService(this, intent)
+        resetButton.setOnClickListener {
+            ScanAccessibilityService.instance?.resetCount()
+            updateDisplay()
         }
 
-        btnStop.setOnClickListener {
-            val intent = Intent(this, ScanCountService::class.java).apply {
-                action = ScanCountService.ACTION_STOP
+        // Button to open Accessibility Settings if not yet turned on
+        val btnAccessibility = Button(this).apply {
+            text = "Enable in Accessibility Settings"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
-            startService(intent)
         }
+        (countText.parent as? android.view.ViewGroup)?.addView(btnAccessibility)
 
-        btnReset.setOnClickListener {
-            val intent = Intent(this, ScanCountService::class.java).apply {
-                action = ScanCountService.ACTION_RESET
-            }
-            startService(intent)
-        }
+        updateDisplay()
+    }
+
+    private fun updateDisplay() {
+        countText.text = "${ScanAccessibilityService.scanCount}"
     }
 
     override fun onResume() {
         super.onResume()
-        tvCount.text = ScanCountService.currentScanCount.toString()
-        val filter = IntentFilter(ScanCountService.ACTION_COUNT_UPDATED)
+        updateDisplay()
+        val filter = IntentFilter("com.example.scancounter.COUNT_UPDATED")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(updateReceiver, filter)
+            registerReceiver(receiver, filter)
         }
     }
 
     override fun onPause() {
         super.onPause()
-        try {
-            unregisterReceiver(updateReceiver)
-        } catch (_: Exception) {}
+        unregisterReceiver(receiver)
     }
 }
